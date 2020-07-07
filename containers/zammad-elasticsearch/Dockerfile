@@ -1,5 +1,4 @@
-FROM docker.elastic.co/elasticsearch/elasticsearch:5.6.14
-MAINTAINER Zammad <info@zammad.org>
+FROM docker.elastic.co/elasticsearch/elasticsearch:7.6.1
 ARG BUILD_DATE
 
 LABEL org.label-schema.build-date="$BUILD_DATE" \
@@ -10,8 +9,9 @@ LABEL org.label-schema.build-date="$BUILD_DATE" \
       org.label-schema.vcs-url="https://github.com/zammad/zammad" \
       org.label-schema.vcs-type="Git" \
       org.label-schema.vendor="Zammad" \
-      org.label-schema.schema-version="2.9.0" \
+      org.label-schema.schema-version="3.4.0" \
       org.label-schema.docker.cmd="sysctl -w vm.max_map_count=262144;docker-compose up"
 
-RUN /usr/share/elasticsearch/bin/elasticsearch-plugin remove x-pack --purge && \
-  yes | /usr/share/elasticsearch/bin/elasticsearch-plugin install ingest-attachment
+SHELL ["/bin/bash", "-e", "-o", "pipefail", "-c"]
+
+RUN /usr/share/elasticsearch/bin/elasticsearch-plugin install --batch ingest-attachment

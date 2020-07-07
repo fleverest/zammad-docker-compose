@@ -17,10 +17,9 @@ This repo is meant to be the starting point for somebody who likes to use docker
 https://docs.zammad.org/en/latest/install-docker-compose.html
 
 
-## Build Status
+## CI Status
 
-[![Build Status](https://travis-ci.org/zammad/zammad-docker-compose.svg?branch=master)](https://travis-ci.org/zammad/zammad-docker-compose)
-
+[![CI Status](https://github.com/zammad/zammad-docker-compose/workflows/ci/badge.svg)](https://github.com/zammad/zammad-docker-compose/actions)
 
 ## Using a reverse proxy
 
@@ -40,3 +39,30 @@ Like this, you can add your `docker-compose.prod.yml` to a branch of your Git re
 ## Using Rancher
 
 * RANCHER_URL=http://RANCHER_HOST:8080 rancher-compose --env-file=.env up
+
+## Upgrading
+
+### From =< 3.3.0-12
+
+We've updated the Elasticsearch image from 5.6 to 7.6. 
+As there is no direct upgrade path we have to delete all Elasticsearch indicies and rebuild them.
+Do the following to empty the ES docker volume:
+
+```
+docker-compose stop
+set -o pipefail DOCKER_VOLUME="$(docker volume inspect zammaddockercompose_elasticsearch-data | grep Mountpoint | sed -e 's#.*": "##g' -e 's#",##')/*"
+echo "${DOCKER_VOLUME}" #check this is a valid docker volume path! if not do not proceed or you might lose data!
+rm -r $(docker volume inspect zammaddockercompose_elasticsearch-data | grep Mountpoint | sed -e 's#.*": "##g' -e 's#",##')/*
+docker-compose start
+```
+
+To workaround the [changes in the PostgreSQL 9.6 container](https://github.com/docker-library/postgres/commit/f1bc8782e7e57cc403d0b32c0e24599535859f76) do the following:
+
+```
+docker-compose start
+docker exec -it zammaddockercompose_zammad-postgresql_1 bash
+psql --username postgres --dbname zammad_production
+CREATE USER zammad;
+ALTER USER zammad WITH PASSWORD 'zammad';
+ALTER USER zammad WITH SUPERUSER CREATEDB;
+```

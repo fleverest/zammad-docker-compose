@@ -7,6 +7,11 @@ services:
     depends_on:
       - zammad-railsserver
     entrypoint: /usr/local/bin/backup.sh
+    environment:
+      - BACKUP_SLEEP=86400
+      - HOLD_DAYS=10
+      - POSTGRESQL_USER=${POSTGRES_USER}
+      - POSTGRESQL_PASSWORD=${POSTGRES_PASS}
     image: ${IMAGE_REPO}:zammad-postgresql${VERSION}
     links:
       - zammad-postgresql
@@ -16,6 +21,8 @@ services:
       - zammad-data:/opt/zammad
 
   zammad-elasticsearch:
+    environment:
+      - discovery.type=single-node
     image: ${IMAGE_REPO}:zammad-elasticsearch${VERSION}
     restart: ${RESTART}
     volumes:
@@ -34,12 +41,14 @@ services:
       - zammad-data:/opt/zammad
 
   zammad-memcached:
-    command: ["zammad-memcached"]
-    image: ${IMAGE_REPO}:zammad-memcached${VERSION}
+    command: memcached -m 256M
+    image: memcached:1.5.22-alpine
     restart: ${RESTART}
 
   zammad-nginx:
     command: ["zammad-nginx"]
+    expose:
+      - "80"
     depends_on:
       - zammad-railsserver
     build: ./containers/zammad/
@@ -49,10 +58,11 @@ services:
     restart: ${RESTART}
     volumes:
       - zammad-data:/opt/zammad
-    expose:
-      - "80"
 
   zammad-postgresql:
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASS}
     image: ${IMAGE_REPO}:zammad-postgresql${VERSION}
     restart: ${RESTART}
     volumes:

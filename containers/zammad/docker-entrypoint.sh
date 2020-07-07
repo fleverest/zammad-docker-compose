@@ -6,20 +6,24 @@ set -e
 : "${ELASTICSEARCH_HOST:=zammad-elasticsearch}"
 : "${ELASTICSEARCH_PORT:=9200}"
 : "${ELASTICSEARCH_SCHEMA:=http}"
+: "${ELASTICSEARCH_NAMESPACE:=zammad}"
 : "${ELASTICSEARCH_SSL_VERIFY:=true}"
 : "${MEMCACHED_HOST:=zammad-memcached}"
 : "${MEMCACHED_PORT:=11211}"
+: "${NGINX_SERVER_NAME:=_}"
+: "${NGINX_SERVER_SCHEME:=\$scheme}"
 : "${POSTGRESQL_HOST:=zammad-postgresql}"
 : "${POSTGRESQL_PORT:=5432}"
-: "${POSTGRESQL_USER:=postgres}"
-: "${POSTGRESQL_PASS:=}"
+: "${POSTGRESQL_USER:=zammad}"
+: "${POSTGRESQL_PASS:=zammad}"
 : "${POSTGRESQL_DB:=zammad_production}"
 : "${POSTGRESQL_DB_CREATE:=true}"
+: "${RAILS_TRUSTED_PROXIES:=['127.0.0.1', '::1']}"
+: "${RSYNC_ADDITIONAL_PARAMS:=--no-perms --no-owner}"
 : "${ZAMMAD_RAILSSERVER_HOST:=zammad-railsserver}"
 : "${ZAMMAD_RAILSSERVER_PORT:=3000}"
 : "${ZAMMAD_WEBSOCKET_HOST:=zammad-websocket}"
 : "${ZAMMAD_WEBSOCKET_PORT:=6042}"
-: "${NGINX_SERVER_NAME:=_}"
 
 function check_zammad_ready {
   sleep 15
@@ -33,8 +37,10 @@ function check_zammad_ready {
 if [ "$1" = 'zammad-init' ]; then
   # install / update zammad
   test -f "${ZAMMAD_READY_FILE}" && rm "${ZAMMAD_READY_FILE}"
-  rsync -a --delete --exclude 'public/assets/images/*' --exclude 'storage/fs/*' "${ZAMMAD_TMP_DIR}/" "${ZAMMAD_DIR}"
-  rsync -a "${ZAMMAD_TMP_DIR}"/public/assets/images/ "${ZAMMAD_DIR}"/public/assets/images
+  # shellcheck disable=SC2086
+  rsync -a ${RSYNC_ADDITIONAL_PARAMS} --delete --exclude 'public/assets/images/*' --exclude 'storage/fs/*' "${ZAMMAD_TMP_DIR}/" "${ZAMMAD_DIR}"
+  # shellcheck disable=SC2086
+  rsync -a ${RSYNC_ADDITIONAL_PARAMS} "${ZAMMAD_TMP_DIR}"/public/assets/images/ "${ZAMMAD_DIR}"/public/assets/images
 
   until (echo > /dev/tcp/"${POSTGRESQL_HOST}"/"${POSTGRESQL_PORT}") &> /dev/null; do
     echo "zammad railsserver waiting for postgresql server to be ready..."
@@ -49,39 +55,31 @@ if [ "$1" = 'zammad-init' ]; then
   # configure memcache
   sed -i -e "s/.*config.cache_store.*file_store.*cache_file_store.*/    config.cache_store = :dalli_store, '${MEMCACHED_HOST}:${MEMCACHED_PORT}'\\n    config.session_store = :dalli_store, '${MEMCACHED_HOST}:${MEMCACHED_PORT}'/" config/application.rb
 
-  echo "initialising / updating database..."
+  # configure trusted proxies
+  sed -i -e "s#config.action_dispatch.trusted_proxies =.*#config.action_dispatch.trusted_proxies = ${RAILS_TRUSTED_PROXIES}#" config/environments/production.rb
 
   # check if database exists / update to new version
-  set +e
-  bundle exec rake db:migrate &> /dev/null
-  DB_MIGRATE="$?"
-
-  # check if database is populated
-  if [ "${DB_MIGRATE}" == "0" ]; then
-      bundle exec rails r "Setting.set('es_url', '${ELASTICSEARCH_SCHEMA}://${ELASTICSEARCH_HOST}:${ELASTICSEARCH_PORT}')" &> /dev/null
-      DB_SETTINGS="$?"
-  fi
-  set -e
-
-  # create database if not exists
-  if [ "${DB_MIGRATE}" != "0" ] && [ "${POSTGRESQL_DB_CREATE}" == "true" ]; then
-      echo "creating database..."
+  echo "initialising / updating database..."
+  if ! (bundle exec rails r 'puts User.any?' 2> /dev/null | grep -q true); then
+    if [ "${POSTGRESQL_DB_CREATE}" == "true" ]; then
       bundle exec rake db:create
+    fi
+    bundle exec rake db:migrate
+    bundle exec rake db:seed
+
+    # create autowizard.json on first install
+    if [ -n "${AUTOWIZARD_JSON}" ]; then
+      echo "${AUTOWIZARD_JSON}" | base64 -d > auto_wizard.json
+    fi
+  else
+    bundle exec rake db:migrate
   fi
-
-  # populate database and create autowizard.json on first install
-  if [ "${DB_SETTINGS}" != "0" ]; then
-      echo "seeding database..."
-      bundle exec rake db:seed
-
-      if [ -n "${AUTOWIZARD_JSON}" ]; then
-        echo "${AUTOWIZARD_JSON}" | base64 -d > auto_wizard.json
-      fi
-  fi
-
+ 
   # es config
   echo "changing settings..."
   bundle exec rails r "Setting.set('es_url', '${ELASTICSEARCH_SCHEMA}://${ELASTICSEARCH_HOST}:${ELASTICSEARCH_PORT}')"
+
+  bundle exec rails r "Setting.set('es_index', '${ELASTICSEARCH_NAMESPACE}')"
 
   if [ -n "${ELASTICSEARCH_USER}" ] && [ -n "${ELASTICSEARCH_PASS}" ]; then
     bundle exec rails r "Setting.set('es_user', \"${ELASTICSEARCH_USER}\")"
@@ -98,6 +96,7 @@ if [ "$1" = 'zammad-init' ]; then
   else
     SSL_SKIP_VERIFY=""
   fi
+  
   if ! curl -s ${SSL_SKIP_VERIFY} ${ELASTICSEARCH_SCHEMA}://${ELASTICSEARCH_HOST}:${ELASTICSEARCH_PORT}/_cat/indices | grep -q zammad; then
     echo "rebuilding es searchindex..."
     bundle exec rake searchindex:rebuild
@@ -116,9 +115,11 @@ if [ "$1" = 'zammad-nginx' ]; then
   check_zammad_ready
 
   # configure nginx
-  if ! env | grep -q KUBERNETES; then
-    sed -e "s#server .*:3000#server ${ZAMMAD_RAILSSERVER_HOST}:${ZAMMAD_RAILSSERVER_PORT}#g" -e "s#server .*:6042#server ${ZAMMAD_WEBSOCKET_HOST}:${ZAMMAD_WEBSOCKET_PORT}#g" -e "s#server_name .*#server_name ${NGINX_SERVER_NAME};#g" -e 's#/var/log/nginx/zammad.\(access\|error\).log#/dev/stdout#g' < contrib/nginx/zammad.conf > /etc/nginx/sites-enabled/default
-  fi
+  sed -e "s#proxy_set_header X-Forwarded-Proto .*;#proxy_set_header X-Forwarded-Proto ${NGINX_SERVER_SCHEME};#g" \
+      -e "s#server .*:3000#server ${ZAMMAD_RAILSSERVER_HOST}:${ZAMMAD_RAILSSERVER_PORT}#g" \
+      -e "s#server .*:6042#server ${ZAMMAD_WEBSOCKET_HOST}:${ZAMMAD_WEBSOCKET_PORT}#g" \
+      -e "s#server_name .*#server_name ${NGINX_SERVER_NAME};#g" \
+      -e 's#/var/log/nginx/zammad.\(access\|error\).log#/dev/stdout#g' < contrib/nginx/zammad.conf > /etc/nginx/sites-enabled/default
 
   echo "starting nginx..."
 
