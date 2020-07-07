@@ -25,7 +25,7 @@ services:
     command: ["zammad-init"]
     depends_on:
       - zammad-postgresql
-    image: ${IMAGE_REPO}:zammad${VERSION}
+    build: ./containers/zammad/
     links:
       - zammad-elasticsearch
       - zammad-postgresql
@@ -42,7 +42,7 @@ services:
     command: ["zammad-nginx"]
     depends_on:
       - zammad-railsserver
-    image: ${IMAGE_REPO}:zammad${VERSION}
+    build: ./containers/zammad/
     links:
       - zammad-railsserver
       - zammad-websocket
@@ -63,7 +63,7 @@ services:
     depends_on:
       - zammad-memcached
       - zammad-postgresql
-    image: ${IMAGE_REPO}:zammad${VERSION}
+    build: ./containers/zammad/
     links:
       - zammad-elasticsearch
       - zammad-memcached
@@ -77,7 +77,7 @@ services:
     depends_on:
       - zammad-memcached
       - zammad-railsserver
-    image: ${IMAGE_REPO}:zammad${VERSION}
+    build: ./containers/zammad/
     links:
       - zammad-elasticsearch
       - zammad-memcached
@@ -91,7 +91,7 @@ services:
     depends_on:
       - zammad-memcached
       - zammad-railsserver
-    image: ${IMAGE_REPO}:zammad${VERSION}
+    build: ./containers/zammad/
     links:
       - zammad-postgresql
       - zammad-memcached
@@ -102,9 +102,28 @@ services:
 volumes:
   elasticsearch-data:
     driver: local
+    driver_opts:
+      type: 'none'
+      o: 'bind'
+      device: '/zammad_data/elastic'
+
   postgresql-data:
     driver: local
+    driver_opts:
+      type: 'none'
+      o: 'bind'
+      device: '/zammad_data/pgsql'
+
   zammad-backup:
     driver: local
+    driver_opts:
+      type: 'none'
+      o: 'bind'
+      device: '/zammad_data/backup'
+
   zammad-data:
     driver: local
+    driver_opts:
+      type: 'none'
+      o: 'bind'
+      device: '/zammad_data/zammad'
